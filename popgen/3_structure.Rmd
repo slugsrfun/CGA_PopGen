@@ -1,0 +1,536 @@
+---
+title: "Population Structure"
+author: "John D. Robinson"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document:
+    toc: true
+linkcolor: blue
+---
+
+# Characterizing Genetic Structure across Georgia's Black Bear Populations
+In this markdown we'll use some files created in `diversity` to characterize population differentiation across Georgia. Two primary analyses are presented below:
+
+1. Calculation of pairwise $F_{ST}$ 
+2. Clustering analyses (PCA and `admixture`)
+
+But first, to avoid including identical genotypes in the pairwise $F_{ST}$ calculations and the `admixture` analyses below, we will first drop the samples that were duplicated in `combined.vcf` - the "survivors", bears that were detected in both 2012 and 2023. We wanted to include those samples in both populations for diversity analyses, but here we'll only keep them in the 2012 group.  
+
+## Deal with "survivors"
+```{r checkRepeats}
+CGA12 <- read.table("CGA12keep.txt", header = FALSE)
+dim(CGA12)
+CGA23 <- read.table("CGA23keep.txt", header = FALSE)
+dim(CGA23)
+
+CGA23nodup <- CGA23$V1[-which(CGA23$V1 %in% CGA12$V1)]
+length(CGA23nodup)
+
+write.table(CGA23nodup, file = "CGA23nodup.txt", 
+            quote = FALSE, 
+            row.names = FALSE,
+            col.names = FALSE)
+```
+
+Now extract the 2023 samples only, this way we don't have duplicated genotypes in our analysis.  
+```{r engine="bash", comment=""}
+#Output the CGA23 only samples
+vcftools --vcf ../snpfiltering/PopGen.vcf --keep CGA23nodup.txt \
+          --recode --out CGA23nodup
+
+#Grab header and SNP rows
+grep -v ^## CGA23nodup.recode.vcf | cut -f 10- > CGA23nodupsnps
+
+#Paste data columns together (using objects made in diversity)
+paste CGA12snps CGA23nodupsnps NGAsnps SGAsnps > tempstruct
+
+#Grab header from one of the files
+grep ^## CGA12.recode.vcf > structure.vcf
+cat tempstruct >> structure.vcf
+
+grep -v ^## structure.vcf | head -1 | tr '\t' '\n' | grep ^UGA > structIID.txt
+```
+
+## Pairwise $F_{ST}$ in `PLINK`
+For this analysis, we first need to make a population "phenotype" file for `PLINK2`...    
+```{r plinkFst}
+#Load the metadata file
+samps <- read.csv("../input/sampleMetaData_cloneID.csv", header = TRUE)
+
+#Use the IID object created above to build plinkPops
+IID <- read.table("structIID.txt", header = FALSE)
+FID <- c()
+for(i in 1:nrow(IID)) {
+  if(strsplit(IID[i,1],split="_")[[1]][1] == "UGAh") {
+    FID[i] <- samps$region[which(samps$vcfID == gsub("h","",IID[i,1]))]
+  } else {
+    FID[i] <- samps$region[which(samps$vcfID == IID[i,1])]
+  }
+
+  if(FID[i] %in% c("CGA", "CGA-H")) {
+    if(strsplit(IID[i,1],split="_")[[1]][1] == "UGAh") {
+      FID[i] <- "CGA12"
+    } else {
+      FID[i] <- "CGA23"
+    }
+  }
+}
+table(FID)
+plinkPops <- data.frame(FID=FID, IID=IID, pop=FID)
+
+#Write this as a phenotype file
+write.table(plinkPops, file = "plinkPops.txt",
+            quote = FALSE,
+            row.names = FALSE,
+            col.names = FALSE)
+system("echo '#FID IID pop' > plinkSampInfo.txt")
+system("cat plinkPops.txt >> plinkSampInfo.txt")
+```
+
+Now use the `--fst` argument in `PLINK2` to calculate two measures of $F_{ST}$:
+
+1. [Weir & Cockerham (1984)](https://doi.org/10.2307/2408641) - `'method=wc'`
+2. The Hudson estimator ([Hudson et al. 1992](https://doi.org/10.1093/genetics/132.2.583), [Bhatia et al. 2013](https://doi.org/10.1101/gr.154831.113)) - `'method=hudson'`  
+
+
+```{r engine="bash", comment = ""}
+plink2 --vcf structure.vcf --fam plinkSampInfo.txt \
+        --fst pop 'method=wc' --out WC --silent
+        
+plink2 --vcf structure.vcf --fam plinkSampInfo.txt \
+        --fst pop 'method=hudson' --out HUDSON --silent
+```
+
+Read the output into R...  
+```{r FstOutput}
+read.table("WC.fst.summary", header = FALSE)
+read.table("HUDSON.fst.summary", header = FALSE)
+```
+
+As before, we see more genetic differentiation between central GA and north / south GA than between north and south GA, despite those two populations being described as separate subspecies (*Ursus americanus americanus* in the north and *U. a. floridanus* in the south). This pattern matches that reported with microsatellite loci in [Hooker et al. (2019)](https://doi.org/10.2192/URSUS-D-18-00025.1).  
+
+
+## Clustering analyses
+
+### Model-free clustering (PCA)
+First using the `adegenet::glPca()` function to visualize clustering across the first three principal components.  
+```{r PCA}
+library(vcfR)
+library(adegenet)
+library(scales)
+
+vcf <- read.vcfR("structure.vcf", verbose=TRUE)
+my_genind <- vcfR2genind(vcf, pop=plinkPops$pop)
+
+my.pca <- glPca(as.genlight(my_genind@tab), nf = 3)
+
+transparent.cols <- c(alpha("darkgoldenrod1", 0.65),
+                      alpha("lightgreen", 0.65),
+                      alpha("darkgreen", 0.65),
+                      alpha("lightblue", 0.65))
+ptcolors <- rep("black", length(my_genind@pop))
+ptcolors[my_genind@pop == "NGA"] <- transparent.cols[1]
+ptcolors[my_genind@pop == "CGA12"] <- transparent.cols[2]
+ptcolors[my_genind@pop == "CGA23"] <- transparent.cols[3]
+ptcolors[my_genind@pop == "SGA"] <- transparent.cols[4]
+
+table(ptcolors)
+
+#PC1vPC2
+plot(my.pca$scores[,1], my.pca$scores[,2], pch = 19, col = ptcolors,
+     xlab = "PC1", ylab = "PC2")
+legend("topleft", bty = "n", pch = c(19,19,19), 
+       col=transparent.cols,
+       legend = c("NGA","CGA-2012","CGA-2023","SGA"), cex = 0.75)
+
+#PC1vPC3
+plot(my.pca$scores[,1], my.pca$scores[,3], pch = 19, col = ptcolors,
+     xlab = "PC1", ylab = "PC3")
+legend("bottomright", bty = "n", pch = c(19,19,19), 
+       col=transparent.cols,
+       legend = c("NGA","CGA-2012","CGA-2023","SGA"), cex = 0.75)
+
+#PC2vPC3
+plot(my.pca$scores[,2], my.pca$scores[,3], pch = 19, col = ptcolors,
+     xlab = "PC2", ylab = "PC3")
+legend("topleft", bty = "n", pch = c(19,19,19), 
+       col=transparent.cols,
+       legend = c("NGA","CGA-2012","CGA-2023","SGA"), cex = 0.75)
+```
+
+There are four samples from CGA that are clustering with samples from NGA...  
+```{r checkCGA}
+#Identify CGA samples clustering with NGA...
+Qsamps <- which(my.pca$scores[,1] > 0 & ptcolors == transparent.cols[3])
+samps[which(samps$vcfID %in% names(Qsamps)),]
+```
+
+These samples are actually offspring from a NGA sow that was relocated to CGA. She moved north to Hancock / Greene Co. and mated with a male in the area. These samples were either collected from the cubs in the field during a den check (`73-B` and `74-B`), or collected from bears that were hit by motorists (`83-RK` and `89-RK`). It makes sense that they're clustering with NGA bears, but they are not natural migrants from NGA.  
+
+### Model-based clustering (`admixture`)
+Next we'll use the model-based clustering analysis in `admixture` ([Alexander et al. 2009](https://doi.org/10.1101/gr.094052.109)) to infer group membership. This is the same underlying model used by `STRUCTURE`, but the maximum likelihood implementation is much faster.  
+
+We can use [PLINK v. 1.9](https://www.cog-genomics.org/plink/) to create a `.bed` file input for `admixture`, still working from the `structure.vcf` generated above.  
+```{zsh recode12}
+plink --vcf structure.vcf --recode12 --out ADMIX \
+        --double-id --allow-extra-chr --silent
+```
+
+We can download `admixture` binaries (for Mac and Linux) from [David Alexander's GitHub site](https://dalexander.github.io/admixture/).  
+
+Now run `admixture` with K=1-6...  
+```{r engine="bash", comment =""}
+ADMIX="/home/jdrobins/admixture_linux-1.3.0/admixture"
+
+for K in 1 2 3 4 5 6
+  do $ADMIX --cv=10 ADMIX.ped $K | tee log${K}.out
+done
+
+#Best K choice will give us lowest CV error
+grep -h CV log*.out
+```
+
+Now let's plot the results...  
+```{r pickK}
+## First the CV error plot
+CVerr <- system("grep -h CV log*.out | cut -f 2 -d :", intern = TRUE)
+CVerr <- as.numeric(CVerr)
+plot(x = c(1:6), CVerr, type = "b", xlab = "K", ylab = "CV Error")
+
+bestK <- which(CVerr == min(CVerr))
+```
+
+The best $K$ appears to be $K =$ `r bestK`, based on our cross-validations. Now let's visualize the results at this $K$ value...   
+```{r ADMIXres}
+## Now for admixture proportions
+#First read in the sample IDs
+adsamps <- read.table("ADMIX.nosex", header = FALSE)
+popmap <- data.frame(vcfID = adsamps[,1], pop=NA, sortord=NA)
+for(i in 1:nrow(popmap)) {
+  if(strsplit(popmap$vcfID[i],split="_")[[1]][1] == "UGAh") {
+    popmap$pop[i] <- "CGA12"
+  } else {
+    popmap$pop[i] <- samps$region[which(samps$vcfID == popmap$vcfID[i])]
+    if(popmap$pop[i] %in% c("CGA","CGA-H")) {
+      popmap$pop[i] <- "CGA23"
+    } 
+  }
+}
+
+#Plot a few reasonable K values -- 2, 3, and 4
+sortedQ <- colscheme <- vector("list", 6)
+for(k in 2:6) {
+  bestKQ <- read.table(paste0("ADMIX.",k,".Q"), header=FALSE)
+  dim(bestKQ)
+  
+  
+  #Order the color scheme so it lines up with the populations...
+  popXcol <- data.frame(pop = c("NGA","CGA23","CGA12","SGA"),
+                        col = c("darkgoldenrod1","darkgreen",
+                                "lightgreen","lightblue"))
+  colscheme[[k]] <- rep(NA, k)
+  p <- 1
+  while(sum(is.na(colscheme[[k]])) > 0) {
+    if(p > 4) {
+      if(sum(is.na(colscheme[[k]])) == 1) {
+        colscheme[[k]][is.na(colscheme[[k]])] <- "lightgrey"
+      } else if(sum(is.na(colscheme[[k]])) == 2) {
+        colscheme[[k]][is.na(colscheme[[k]])] <- c("lightgrey","darkgrey")
+      } else if(sum(is.na(colscheme[[k]])) == 3) {
+        colscheme[[k]][is.na(colscheme[[k]])] <- c("lightgrey","darkgrey","black")
+      }
+    } else {
+      tmp <- which(apply(bestKQ[which(popmap$pop == popXcol$pop[p]),],2,mean) > 0.5)
+      if(length(tmp) > 0 & is.na(colscheme[[k]][tmp])) {
+        colscheme[[k]][tmp] <- popXcol$col[p]
+      }
+      rm(tmp)
+    }
+    p <- p+1
+  }
+  
+  #Set the order for plotting along the x-axis (individuals)...
+  popmap$sortord[which(popmap$pop == "NGA")] <- 1
+  popmap$sortord[which(popmap$pop == "CGA12")] <- 2
+  popmap$sortord[which(popmap$pop == "CGA23")] <- 3
+  popmap$sortord[which(popmap$pop == "SGA")] <- 4
+  
+  sum(is.na(popmap$sortord))
+  
+  #Sort the samples by population - NGA, CGA12, CGA23, SGA...
+  sortedmap <- popmap[order(popmap$sortord),]
+  sortedQ[[k]] <- bestKQ[order(popmap$sortord),]
+  
+  fillcols <- popXcol$col[match(colscheme[[k]], popXcol$col)]
+  fillleg <- popXcol$pop[match(colscheme[[k]], popXcol$col)]
+  fillcols <- fillcols[!is.na(fillcols)]
+  fillleg <- fillleg[!is.na(fillleg)]
+  
+  barplot(t(as.matrix(sortedQ[[k]])), 
+          col=colscheme[[k]], ylab = "Ancestry", xlab = "Individual",
+          border=NA, names=sortedmap$pop, cex.names = 0.75)
+  legend("topright", bty="n", title = "Genetic Cluster",
+         ncol = length(fillcols), 
+         fill = fillcols, legend = fillleg, 
+         xpd = TRUE, inset = c(0, -0.2))
+}
+```
+
+There are a couple of points that are worth noting from these plots:
+
+i. With $K = 2$, four bears in the central GA sample have north GA ancestry (four golden bars in the predominantly green sample set)
+ii. With $K = 3$ and $K = 4$, we recover a grey admixture component within the central GA samples
+iii. Only with $K \ge 5$ do we see the south GA population split out as a separate group!
+
+### North GA bears in Central GA?
+Let's take a look at the bears that have north GA ancestry within our central GA sample...  
+```{r NGAinCGA}
+#These show up with K = 2
+colscheme[[2]]
+
+nga.col <- which(colscheme[[2]] == popXcol$col[which(popXcol$pop == "NGA")])
+sortedmap[which(sortedQ[[2]][,nga.col] > 0.5 & 
+                  !sortedmap$pop %in% c("NGA","SGA")),]
+samps[which(samps$vcfID %in% 
+              sortedmap$vcfID[which(sortedQ[[2]][,nga.col] > 0.5 &
+                                      !sortedmap$pop %in% c("SGA","NGA"))]),]
+```
+
+
+Those are the same four bears we saw in the PCA. Offspring of a translocated NGA sow that mated with a male bear in the vicinity of Greene and Hancock counties (north of CGA).  
+
+### Grey component in central GA
+What about those samples with grey ancestry in the plot?  
+```{r greybars}
+colscheme[[3]]
+
+grey.col <- which(!colscheme[[3]] %in% popXcol$col)
+sortedmap[which(sortedQ[[3]][,grey.col] > 0.5),]
+samps[which(samps$vcfID %in% 
+              sortedmap$vcfID[which(sortedQ[[3]][,grey.col] > 0.5)]),]
+```
+
+There's no clear reason that these individuals would be part of a different group. Perhaps this is an artificial cluster that helps the model in `admixture` account for deviations from Hardy-Weinberg equilibrium? One of the observations from `19_diversity` was that the spread of $F_{IS}$ was quite a bit larger within CGA. Let's look at those $F_{IS}$ values again.  
+```{r greyFis}
+CGA23.Fis <- read.table("CGA23.het", header = TRUE)
+CGA23.Fis[which(CGA23.Fis$INDV %in% 
+                  sortedmap$vcfID[which(sortedQ[[3]][,grey.col] > 0.5)]),]
+#All 3 have negative F_{IS} so this doesn't appear to be from inbred individuals
+
+#How large are these 3 clones?
+#First one...
+samps[which(
+  samps$finalClone == 
+    samps$finalClone[which(samps$vcfID == 
+                             sortedmap$vcfID[which(sortedQ[[3]][,grey.col] > 
+                                                     0.5)][1])]),]
+#Second one...
+samps[which(
+  samps$finalClone == 
+    samps$finalClone[which(samps$vcfID == 
+                             sortedmap$vcfID[which(sortedQ[[3]][,grey.col] > 
+                                                     0.5)][2])]),]
+#Third one...
+samps[which(
+  samps$finalClone == 
+    samps$finalClone[which(samps$vcfID == 
+                             sortedmap$vcfID[which(sortedQ[[3]][,grey.col] > 
+                                                     0.5)][3])]),]
+```
+
+From the stuff above, there are three clones from the recent central GA sample set that have very high ancestry from an inferred cluster with no clear associated population. All three of these individuals have $F_{IS}$ less than 0, and all three are comprised of a single sample.  
+
+Does the proportional allocation of ancestry to this grey cluster correlate with $F_{IS}$ more broadly?  
+```{r corQgrey}
+#First create a data frame with grey Q values and Fis for CGA23 clones...
+greyDF <- data.frame(vcfID = sortedmap$vcfID,
+                     pop = sortedmap$pop,
+                     greyQ = sortedQ[[3]][,grey.col],
+                     Fis = NA)
+greyDF <- greyDF[which(greyDF$pop == "CGA23"),]
+
+for(i in 1:nrow(greyDF)) {
+  greyDF$Fis[i] <- CGA23.Fis$F[which(CGA23.Fis$INDV == greyDF$vcfID[i])]
+}
+
+#Test for a correlation
+cor.test(greyDF$Fis, greyDF$greyQ)
+
+#Plot the relationship
+plot(greyDF$greyQ ~ greyDF$Fis, 
+     pch = 19, cex = 0.7, 
+     xlab = expression(italic(F[IS])), 
+     ylab = "Q for grey cluster")
+legend("topright", bty = "n", 
+       legend = paste("Pearson's r =", 
+                      round(cor(greyDF$Fis, greyDF$greyQ), 3)))
+```
+
+We might be onto something here. It looks like the majority of samples that have high grey cluster ancestry tend to be those that have strongly negative $F_{IS}$ values.  
+
+What happens if we remove samples with $F_{IS} < -0.5$ and repeat the admixture analysis?  
+```{r dropLowFsamps}
+#Make a list of CGA23 samples to drop those with F_{IS} < -0.5
+noLowFsamps <- CGA23.Fis$INDV[which(CGA23.Fis$F < -0.5)]
+length(noLowFsamps)
+
+write.table(noLowFsamps, file = "noLowF.txt",             
+            quote = FALSE,
+            row.names = FALSE,
+            col.names = FALSE)
+```
+
+Now create input files after removing these `r length(noLowFsamps)` individuals and repeat the `admixture` analysis...  
+```{r engine="bash", comment = ""}
+#Use vcftools to remove the samples with low F_{IS}
+vcftools --vcf structure.vcf --remove noLowF.txt --out noLowF --recode
+#Use plink v. 1.9 to make a .ped file for the admixture anlaysis
+plink --vcf noLowF.recode.vcf --recode12 --out ADMIXnoLowF \
+        --double-id --allow-extra-chr --silent
+        
+#Run admixture again...
+ADMIX="/home/jdrobins/admixture_linux-1.3.0/admixture"
+for K in 1 2 3 4 5 6
+  do $ADMIX --cv=10 ADMIXnoLowF.ped $K | tee noLowF_log${K}.out
+done
+
+#Best K choice will give us lowest CV error
+grep -h CV noLowF_log*.out
+```
+
+Identify the best $K$ and plot the results...  
+```{r noLowF-results}
+## First the CV error plot
+CVerr <- system("grep -h CV noLowF_log*.out | cut -f 2 -d :", intern = TRUE)
+CVerr <- as.numeric(CVerr)
+plot(x = c(1:6), CVerr, type = "b", xlab = "K", ylab = "CV Error")
+
+bestK <- which(CVerr == min(CVerr))
+bestK
+
+adsamps <- read.table("ADMIXnoLowF.nosex", header = FALSE)
+popmap <- data.frame(vcfID = adsamps[,1], pop=NA, sortord=NA)
+for(i in 1:nrow(popmap)) {
+  if(strsplit(popmap$vcfID[i],split="_")[[1]][1] == "UGAh") {
+    popmap$pop[i] <- "CGA12"
+  } else {
+    popmap$pop[i] <- samps$region[which(samps$vcfID == popmap$vcfID[i])]
+    if(popmap$pop[i] %in% c("CGA","CGA-H")) {
+      popmap$pop[i] <- "CGA23"
+    } 
+  }
+}
+
+#Plot the different K values
+sortedQ <- colscheme <- vector("list", 6)
+for(k in 2:6) {
+  bestKQ <- read.table(paste0("ADMIXnoLowF.",k,".Q"), header=FALSE)
+  dim(bestKQ)
+
+  
+  #Order the color scheme so it lines up with the populations...
+  popXcol <- data.frame(pop = c("NGA","CGA23","CGA12","SGA"),
+                        col = c("darkgoldenrod1","darkgreen",
+                                "lightgreen","lightblue"))
+  colscheme[[k]] <- rep(NA, k)
+  p <- 1
+  while(sum(is.na(colscheme[[k]])) > 0) {
+    if(p > 4) {
+      if(sum(is.na(colscheme[[k]])) == 1) {
+        colscheme[[k]][is.na(colscheme[[k]])] <- "lightgrey"
+      } else if(sum(is.na(colscheme[[k]])) == 2) {
+        colscheme[[k]][is.na(colscheme[[k]])] <- c("lightgrey","darkgrey")
+      } else if(sum(is.na(colscheme[[k]])) == 3) {
+        colscheme[[k]][is.na(colscheme[[k]])] <- c("lightgrey","darkgrey","black")
+      }
+    } else {
+      tmp <- which(apply(bestKQ[which(popmap$pop == popXcol$pop[p]),],2,mean) > 0.5)
+      if(length(tmp) > 0 & is.na(colscheme[[k]][tmp])) {
+        colscheme[[k]][tmp] <- popXcol$col[p]
+      }
+      rm(tmp)
+    }
+    p <- p+1
+  }
+
+  #Set the order for plotting along the x-axis (individuals)...
+  popmap$sortord[which(popmap$pop == "NGA")] <- 1
+  popmap$sortord[which(popmap$pop == "CGA12")] <- 2
+  popmap$sortord[which(popmap$pop == "CGA23")] <- 3
+  popmap$sortord[which(popmap$pop == "SGA")] <- 4
+
+  sum(is.na(popmap$sortord))
+
+  #Sort the samples by population - NGA, CGA12, CGA23, SGA...
+  sortedmap <- popmap[order(popmap$sortord),]
+  sortedQ[[k]] <- bestKQ[order(popmap$sortord),]
+  
+  fillcols <- popXcol$col[match(colscheme[[k]], popXcol$col)]
+  fillleg <- popXcol$pop[match(colscheme[[k]], popXcol$col)]
+  fillcols <- fillcols[!is.na(fillcols)]
+  fillleg <- fillleg[!is.na(fillleg)]
+  
+  barplot(t(as.matrix(sortedQ[[k]])), 
+          col=colscheme[[k]], ylab = "Ancestry", xlab = "Individual",
+          border=NA, names =sortedmap$pop, cex.names = 0.75)
+  legend("topright", bty="n", title = "Genetic Cluster",
+         ncol = length(fillcols), 
+         fill = fillcols, legend = fillleg, 
+         xpd = TRUE, inset = c(0, -0.2))
+}
+```
+
+The "best" $K=3$, and this plot is quite clean after removing the handful of samples with low $F_{IS}$. The analysis recovers the three GA populations cleanly. This is the most sensible of the `admixture` results for these samples.  
+
+The grey ancestry component is still present with $K \ge 4$. In fact, it looks more common than it did with those eight samples in the analysis. Is it still related to the $F_{IS}$ values?  
+```{r checkFisAgain}
+#With K = 4 this time...
+colscheme[[4]]
+
+grey.col <- which(!colscheme[[4]] %in% popXcol$col)
+sortedmap[which(sortedQ[[4]][,grey.col] > 0.5),]
+samps[which(samps$vcfID %in% 
+              sortedmap$vcfID[which(sortedQ[[4]][,grey.col] > 0.5)]),]
+
+#First create a data frame with grey Q values and Fis for CGA23 clones...
+greyDF <- data.frame(vcfID = sortedmap$vcfID[sortedmap$pop == "CGA23"],
+                     pop = sortedmap$pop[sortedmap$pop == "CGA23"],
+                     greyQ = sortedQ[[4]][sortedmap$pop == "CGA23",
+                                          grey.col],
+                     Fis = NA)
+
+for(i in 1:nrow(greyDF)) {
+  greyDF$Fis[i] <- CGA23.Fis$F[which(CGA23.Fis$INDV == greyDF$vcfID[i])]
+}
+
+#Test for a correlation
+cor.test(greyDF$Fis, greyDF$greyQ)
+
+#Plot the relationship
+plot(greyDF$greyQ ~ greyDF$Fis, 
+     pch = 19, cex = 0.7, 
+     xlab = expression(italic(F[IS])), 
+     ylab = "Q for grey cluster")
+legend("topright", bty = "n", 
+       legend = paste("Pearson's r =", 
+                      round(cor(greyDF$Fis, greyDF$greyQ), 3)))
+```
+
+It's noisier now... not as clear of a connection between strongly negative $F_{IS}$ and high ancestry for the grey cluster. But the same general pattern seems to be there. Samples with predominantly grey cluster ancestry have low $F_{IS}$.  
+
+
+---
+
+## Summary
+Overall, the plot with $K=3$ (after excluding samples with very low $F_{IS}$) makes the most sense. Black bear populations in north and south GA are distinct, as is the population in central GA. Results with $K=2$ reflect known issues with the algorithm that underlies `STRUCTURE` and `admixture`. These models exhibit biases when dealing with situations of hierarchical population structure or imbalanced sampling ([Kalinowski 2011](https://doi.org/10.1038/hdy.2010.95), [Puechmaille 2016](https://doi.org/10.1111/1755-0998.12512)), both of which could be affecting our results.  
+
+The grey admixture component that shows up starting with $K=3$ does appear to be due to strongly negative $F_{IS}$ in some samples. This additional ancestry component is still seen with $K=4$ after removing the handful of samples with the most strongly negative $F_{IS}$. The lack of recaptures and the excess heterozygosity in the three samples with high grey ancestry with $K=3$ (prior to removing samples) suggests that the low $F_{IS}$ values could be due to contamination.  
+
+Overall, results from $F_{ST}$, PCA, and `admixture` are generally quite similar and in agreement with previous findings (*e.g.*, from [Hooker et al. 2019](https://doi.org/10.2192/URSUS-D-18-00025.1)). Back bears in central GA are more genetically differentiated from bears in north and south GA than the north and south GA populations are from one another (despite these populations being described as *Ursus americanus americanus* and *U. a. floridanus*, respectively). This is most likely due to strong genetic drift in the small central GA population, rather than a long history of genetic distinctiveness.  
+
+
+---
+
+
+
+

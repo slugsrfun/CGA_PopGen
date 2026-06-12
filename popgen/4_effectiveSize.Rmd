@@ -1,0 +1,179 @@
+---
+title: "Effective Population Size"
+author: "John D. Robinson"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document: 
+    toc: true
+linkcolor: blue
+---
+
+# Estimating Effective Population Size ($N_e$) 
+In this markdown, we'll use the linkage disequilibrium (LD) method ([Hill 1981](https://doi.org/10.1017/S0016672300020553)) to estimate effective population size of the three black bear populations in Georgia using the samples processed via capture-seq. For this analysis, we'll use the same set of SNPs (`combined.vcf`) analyzed for genetic diversity (see `19_diversity`) and population differentiation (see `20_structure`). Note that we'll also avoid using intrachromosomal comparisons when calculating $r^2$ for these estimates ([Waples et al. 2016](https://doi.org/10.1038/hdy.2016.60)).  
+
+The software `NeEstimator v2` can be downloaded and installed from [this GitHub repository](https://github.com/bunop/NeEstimator2.X).  
+
+## Create a `GENEPOP` file (from scratch) 
+The specifications of this format can be found [here](https://genepop.curtin.edu.au/help_input.html).  
+
+First, generate a file with genotypes for all samples in the `combined.vcf` file in `012` format...  
+```{r engine="bash", comment = ""}
+ulimit -n 3000
+vcftools --vcf combined.vcf --out combined --012
+```
+
+Then, recreate the population-specific `snps` objects we used in `19_diversity`.  
+```{r makeSNPs}
+#Load metadata file
+samps <- read.csv("../input/sampleMetaData_cloneID.csv", header = TRUE)
+
+#Build a popmap file to map individual samples back to their population
+popmap <- read.table("combined.012.indv", header = FALSE)
+names(popmap) <- "vcfID"
+popmap$region <- popmap$ugaID <- popmap$year <- NA
+for(i in 1:nrow(popmap)) {
+  if(strsplit(popmap$vcfID[i], split="_")[[1]][1] == "UGAh") {
+    popmap$region[i] <- samps$region[which(samps$vcfID == 
+                                             gsub("h", "", popmap$vcfID[i]))]
+    popmap$ugaID[i] <- samps$ugaID[which(samps$vcfID ==
+                                           gsub("h", "", popmap$vcfID[i]))]
+    popmap$year[i] <- samps$year[which(samps$vcfID == 
+                                         gsub("h", "", popmap$vcfID[i]))]
+  } else {
+    popmap$region[i] <- samps$region[which(samps$vcfID == 
+                                             popmap$vcfID[i])]
+    popmap$ugaID[i] <- samps$ugaID[which(samps$vcfID == popmap$vcfID[i])]
+    popmap$year[i] <- samps$year[which(samps$vcfID == popmap$vcfID[i])]
+  }
+
+  if(popmap$region[i] %in% c("CGA", "CGA-H")) {
+    if(strsplit(popmap$vcfID[i], split="_")[[1]][1] == "UGAh") {
+      popmap$region[i] <- "CGA12"
+    } else {
+      popmap$region[i] <- "CGA23"
+    }
+  }
+}
+
+snps <- read.table("combined.012", header = FALSE)
+dim(snps) #rows are individuals, columns are SNPs
+dim(popmap)
+#Missing data are coded as -1's
+
+#Create subset datasets for each "population" in our dataset
+# 1. The focal population in central GA sampled in this project - `CGA23`
+# 2. Historic samples from central GA (from ~2012) - `CGA12`
+# 3. The north GA population - `NGA`
+# 4. The south GA population - `SGA`
+
+#Make CGA12 & CGA23 snp datasets
+CGA12snps <- snps[which(popmap$region == "CGA12"),]
+CGA12pop <- popmap[which(popmap$region == "CGA12"),]
+CGA23snps <- snps[which(popmap$region == "CGA23"),]
+CGA23pop <- popmap[which(popmap$region == "CGA23"),]
+nrow(CGA12snps)
+nrow(CGA23snps)
+
+NGAsnps <- snps[popmap$region == "NGA",]
+NGApop <- popmap[popmap$region == "NGA",]
+nrow(NGAsnps)
+
+SGAsnps <- snps[popmap$region == "SGA",]
+SGApop <- popmap[popmap$region == "SGA",]
+nrow(SGAsnps)
+```
+
+There were four bears with NGA ancestry in our CGA sample. These were offspring of a mother translocated to CGA from NW GA (see `20_structure` for more details). This artifical mixture could bias our estimates of $N_e$ downwards (via addition of mixture LD). Therefore, we'll remove these four individuals from the dataset before proceeding with the estimation.   
+```{r dropBears}
+#Remove NGA bears from CGA sample
+dropbears <- which(CGA23pop$ugaID %in% c("74-B","73-B","83-RK","89-RK"))
+length(dropbears)
+CGA23pop <- CGA23pop[-dropbears,]
+CGA23snps <- CGA23snps[-dropbears,]
+dim(CGA23snps)
+dim(CGA23pop)
+```
+
+Now create an input file in `GENEPOP` format.  
+```{r makeGenepop}
+#Create GENEPOP input
+loclist <- paste0("SNP",1:ncol(snps[,-1]))
+makeGP <- function(x) {
+  x[which(x == "0")] <- "0101"
+  x[which(x == "1")] <- "0102"
+  x[which(x == "2")] <- "0202"
+  x[which(x == "-1")] <- "0000"
+  return(x)
+}
+
+#For each of the 4 populations...
+#CGA 2012
+CGA12gp <- apply(CGA12snps[,-1], 2, FUN=makeGP)
+CGA12gp <- cbind(paste0(CGA12pop$ugaID,","), CGA12gp)
+
+#CGA 2023
+CGA23gp <- apply(CGA23snps[,-1], 2, FUN=makeGP)
+CGA23gp <- cbind(paste0(CGA23pop$ugaID,","), CGA23gp)
+
+#NGA
+NGAgp <- apply(NGAsnps[,-1], 2, FUN=makeGP)
+NGAgp <- cbind(paste0(NGApop$ugaID,","), NGAgp)
+
+#SGA
+SGAgp <- apply(SGAsnps[,-1], 2, FUN=makeGP)
+SGAgp <- cbind(paste0(SGApop$ugaID,","), SGAgp)
+
+
+cat("NeEstimator - all pops", file = "CGA_GPfile.txt")
+cat("\n", file = "CGA_GPfile.txt", append = T)
+cat(paste0(loclist, collapse = ","), file = "CGA_GPfile.txt", append = T)
+cat("\n", file = "CGA_GPfile.txt", append = T)
+cat("POP", file = "CGA_GPfile.txt", append = T)
+cat("\n", file = "CGA_GPfile.txt", append = T)
+write.table(CGA12gp, file = "CGA_GPfile.txt", 
+            append = T, quote = F, sep = " ", row.names = F, col.names = F)
+cat("POP", file = "CGA_GPfile.txt", append = T)
+cat("\n", file = "CGA_GPfile.txt", append = T)
+write.table(CGA23gp, file = "CGA_GPfile.txt", 
+            append = T, quote = F, sep = " ", row.names = F, col.names = F)
+cat("POP", file = "CGA_GPfile.txt", append = T)
+cat("\n", file = "CGA_GPfile.txt", append = T)
+write.table(NGAgp, file = "CGA_GPfile.txt", 
+            append = T, quote = F, sep = " ", row.names = F, col.names = F)
+cat("POP", file = "CGA_GPfile.txt", append = T)
+cat("\n", file = "CGA_GPfile.txt", append = T)
+write.table(SGAgp, file = "CGA_GPfile.txt", 
+            append = T, quote = F, sep = " ", row.names = F, col.names = F)
+
+
+#Now create the SNP info file with chromosome information
+cpos <- read.table("combined.012.pos", header = FALSE)
+snpkey <- data.frame(CHROM=cpos[,1], SNP=loclist)
+write.table(snpkey, "SNPkey.txt", 
+            quote = FALSE, row.names = FALSE, col.names = TRUE)
+```
+
+## Run `NeEstimator`
+The analysis requires `info` and `option` files as well. These were created in a text editor.  
+```{r engine="bash", comment = ""}
+cat ../input/CGA_info.txt
+
+cat ../input/CGA_option.txt
+```
+
+Now run NeEstimator with these files, this doesn't take too terribly long...  
+
+*n.b.*, this chunk did not work on the UGA cluster. Repeated errors that NeEstimator exited with status 134. However, the program generates the expected output. Setting `eval=FALSE` in this chunk header and using output from the first submission (earlier today) in the generation of the markdown.  
+```{r NeStep, eval=FALSE}
+NeEst="/home/jdrobins/Software/NeEstimator2.X/Ne2L"
+$NeEst i:../input/CGA_info.txt o:../input/CGA_option.txt
+```
+
+## $N_e$ estimates
+Now let's look at the output...  
+\tiny
+```{r engine='bash', comment=''}
+cat CGA_NexLD.txt
+```
+
+---

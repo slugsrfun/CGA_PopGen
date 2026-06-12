@@ -1,0 +1,409 @@
+---
+title: "Characterizing Genetic Diversity"
+author: "John D. Robinson"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    toc: true
+linkcolor: blue
+---
+
+# Characterizing Genetic Diversity of Black Bear Populations in Georgia
+In this markdown, we'll calculate some simple summaries of genetic diversity for each of the populations represented in our dataset: i) central GA historic (~2012), ii) central GA current (2022-2024), iii) north GA, and iv) south GA. We will calculate the following diversity summaries for each of these:
+
+1. Number of polymorphic SNPs in the population ($K$)
+2. Expected heterozygosity ($H_e$)
+3. Observed heterozygosity ($H_o$)
+4. Inbreeding coefficient ($F_{IS}$)
+5. Rarefied allelic richness ($AR$)
+
+
+## Extract SNP data from filtered VCF
+First, use `vcftools` to generate a `012` format file. This file stores genotypes at all SNPs as counts of non-reference allele copies (*i.e.*, the `ALT` allele) - 0, 1, or 2. This line will generate 3 files:
+
+1. `PopGen.012` - the genotype matrix, individuals are rows, loci are columns
+2. `PopGen.012.indv` - a vector of individual IDs (the `rgID`, in this case)
+3. `PopGen.012.pos` - a two-column file with `CHROM` and `POS` for each SNP in the dataset
+
+```{r engine="bash", comment=""}
+ulimit -n 3000
+vcftools --vcf ../snpfiltering/PopGen.vcf --out PopGen --012
+```
+
+Before we start calculating statistics for the populations, we need to create a file that will facilitate splitting up the dataset. Start with `PopGen.012.indv` and add columns for the UGA ID number and the region (population) where the sample comes from.  
+```{r makePopMap}
+#Load metadata file
+samps <- read.csv("../input/sampleMetaData_cloneID.csv", header = TRUE)
+
+#Build a popmap file to map individual samples back to their population
+popmap <- read.table("PopGen.012.indv", header = FALSE)
+names(popmap) <- "vcfID"
+
+popmap$ugaID <- NA
+popmap$region <- popmap$year <- NA 
+popmap$survivor <- popmap$finalClone <- NA
+for(i in 1:nrow(popmap)) {
+  popmap$region[i] <- samps$region[which(samps$vcfID == popmap$vcfID[i])]
+  popmap$ugaID[i] <- samps$ugaID[which(samps$vcfID == popmap$vcfID[i])]
+  popmap$year[i] <- samps$year[which(samps$vcfID == popmap$vcfID[i])]
+  popmap$finalClone[i] <- samps$finalClone[which(samps$vcfID == popmap$vcfID[i])]
+
+  #How many regions for this clone?
+  nReg <- length(unique(samps$region[which(samps$finalClone == 
+                                             popmap$finalClone[i])]))
+  if(nReg > 1) {
+    popmap$survivor[i] <- TRUE
+  } else {
+    popmap$survivor[i] <- FALSE
+  }
+}
+nrow(popmap)
+head(popmap)
+table(popmap$region)
+table(popmap$year[popmap$region == "CGA"])
+table(popmap$year[popmap$region == "CGA-H"])
+sum(popmap$survivor)
+```
+
+Now read in the `012` format SNP data...   
+```{r loadSNPs}
+snps <- read.table("PopGen.012", header = FALSE)
+dim(snps) #rows are individuals, columns are SNPs
+dim(popmap)
+#Missing data are coded as -1's
+
+#Drop all samples with fewer than 2000 genotyped loci
+droprows <- which(rowSums(snps[,-1] > -1) < 2000)
+snps <- snps[-droprows,]
+dim(snps)
+popmap <- popmap[-droprows,]
+dim(popmap)
+table(popmap$region)
+table(popmap$year[popmap$region == "CGA"])
+table(popmap$year[popmap$region == "CGA-H"])
+```
+
+Create subset datasets for each "population" in our dataset. Don't forget to include bears captured in both 2012 and 2023 (there are 2 of these) in *both* `CGA23` and `CGA12`! We will create four of these objects:
+
+1. The focal population in central GA sampled in this project - `CGA23`
+2. Historic samples from central GA (from ~2012) - `CGA12`
+3. The north GA population - `NGA`
+4. The south GA population - `SGA`
+
+```{r makeSubset}
+#Sample sizes per "region"
+table(popmap$region)
+# but there are some survivors too...
+popmap$year[which(popmap$survivor == TRUE)]
+# these bears should be represented in both CGA12 and CGA23
+
+#Make CGA12 & CGA23 snp datasets
+CGA12snps <- snps[which(popmap$region == "CGA-H" | popmap$survivor == TRUE),]
+CGA12pop <- popmap[which(popmap$region == "CGA-H" | popmap$survivor == TRUE),]
+CGA23snps <- snps[which(popmap$region == "CGA" | popmap$survivor == TRUE),]
+CGA23pop <- popmap[which(popmap$region == "CGA" | popmap$survivor == TRUE),]
+nrow(CGA12snps)
+nrow(CGA12pop)
+nrow(CGA23snps)
+nrow(CGA23pop)
+
+NGAsnps <- snps[popmap$region == "NGA",]
+NGApop <- popmap[popmap$region == "NGA",]
+nrow(NGAsnps)
+nrow(NGApop)
+
+SGAsnps <- snps[popmap$region == "SGA",]
+SGApop <- popmap[popmap$region == "SGA",]
+nrow(SGAsnps)
+nrow(SGApop)
+```
+
+## Number of polymorphic markers per population
+Record the number of SNPs that are variable within each of the four populations...  
+```{r polySNPs}
+#Function to check polymorphism
+is.poly <- function(x) {
+  if(any(x == 1)) { #If any individual is a heterozygote
+    out <- TRUE
+  } else if(any(x == 0) & any(x == 2)) { #If both homozygotes are observed
+      out <- TRUE
+  } else { #If no hets and both homozygotes NOT observed, not polymorphic
+    out <- FALSE
+  }
+  return(out)
+}
+
+#Polymorhpic SNP numbers per population
+sum(apply(snps[,-1], 2, FUN=is.poly))
+sum(apply(CGA12snps[,-1], 2, FUN=is.poly))
+sum(apply(CGA23snps[,-1], 2, FUN=is.poly))
+sum(apply(NGAsnps[,-1], 2, FUN=is.poly))
+sum(apply(SGAsnps[,-1], 2, FUN=is.poly))
+```
+
+```{r compPoly, echo = FALSE}
+out <- data.frame(NGA = nrow(NGAsnps),
+                  CGA12 = nrow(CGA12snps),
+                  CGA23 = nrow(CGA23snps),
+                  SGA = nrow(SGAsnps))
+temp <- data.frame(NGA = sum(apply(NGAsnps[,-1], 2, FUN=is.poly)),
+                  CGA12 = sum(apply(CGA12snps[,-1], 2, FUN=is.poly)),
+                  CGA23 = sum(apply(CGA23snps[,-1], 2, FUN=is.poly)),
+                  SGA = sum(apply(SGAsnps[,-1], 2, FUN=is.poly)))
+out <- rbind(out, temp)
+rownames(out) <- c("n","K")
+rm(temp)
+```
+
+
+## Expected Heterozygosity  
+Calculate allele frequencies per locus, then expected heterozygosity of that locus...  
+```{r calcHe}
+getHe <- function(x) {
+  frq <- sum(x[x > -1])/(2*(sum(x > -1)))
+  He.loc <- 2*frq*(1-frq)
+  return(He.loc)
+}
+
+
+mean(apply(CGA12snps[,-1], 2, FUN=getHe), na.rm = TRUE)
+mean(apply(CGA23snps[,-1], 2, FUN=getHe), na.rm = TRUE)
+mean(apply(NGAsnps[,-1], 2, FUN=getHe), na.rm = TRUE)
+mean(apply(SGAsnps[,-1], 2, FUN=getHe), na.rm = TRUE)
+```
+
+```{r compHe, echo = FALSE}
+temp <- data.frame(NGA = mean(apply(NGAsnps[,-1], 2, FUN=getHe), na.rm = TRUE),
+                   CGA12 = mean(apply(CGA12snps[,-1], 2, FUN=getHe), na.rm = TRUE),
+                   CGA23 = mean(apply(CGA23snps[,-1], 2, FUN=getHe), na.rm = TRUE),
+                   SGA = mean(apply(SGAsnps[,-1], 2, FUN=getHe), na.rm = TRUE))
+out <- rbind(out, temp)
+rownames(out) <- c("n","K","He")
+rm(temp)
+```
+
+## Observed Heterozygosity  
+Calculate observed heterozygosity (# hets / # genotyped) per locus, then average across loci...  
+```{r calcHo}
+#Calculating per locus, then averaging across loci
+getHo <- function(x) {
+  n.hets <- sum(x == 1)
+  n.geno <- sum(x > -1)
+  Ho.loc <- n.hets/n.geno
+  return(Ho.loc)
+}
+
+mean(apply(CGA12snps[,-1], 2, FUN=getHo), na.rm = TRUE)
+mean(apply(CGA23snps[,-1], 2, FUN=getHo), na.rm = TRUE)
+mean(apply(NGAsnps[,-1], 2, FUN=getHo), na.rm = TRUE)
+mean(apply(SGAsnps[,-1], 2, FUN=getHo), na.rm = TRUE)
+```
+
+```{r compHo, echo = FALSE}
+temp <- c(mean(apply(NGAsnps[,-1], 2, FUN=getHo), na.rm = TRUE),
+          mean(apply(CGA12snps[,-1], 2, FUN=getHo), na.rm = TRUE),
+          mean(apply(CGA23snps[,-1], 2, FUN=getHo), na.rm = TRUE),
+          mean(apply(SGAsnps[,-1], 2, FUN=getHo), na.rm = TRUE))
+out <- rbind(out, temp)
+rownames(out) <- c("n","K","He","Ho")
+rm(temp)
+```
+
+## Inbreeding Coefficients  
+Now use `vcftools` to calculate inbreeding coefficients - $F_{IS}$ - for individuals, average them for each of the populations, and look to see if there's evidence for highly inbred individuals.  
+
+First, make keep files for the population to use with `vcftools.`  
+```{r makeKeep}
+#Make keep files for the individual populations - with these same individuals...
+write.table(CGA12pop$vcfID, file = "CGA12keep.txt", 
+            quote = FALSE, 
+            row.names = FALSE,
+            col.names = FALSE)
+write.table(CGA23pop$vcfID, file = "CGA23keep.txt", 
+            quote = FALSE, 
+            row.names = FALSE,
+            col.names = FALSE)
+write.table(NGApop$vcfID, file = "NGAkeep.txt", 
+            quote = FALSE, 
+            row.names = FALSE,
+            col.names = FALSE)
+write.table(SGApop$vcfID, file = "SGAkeep.txt", 
+            quote = FALSE, 
+            row.names = FALSE,
+            col.names = FALSE)
+```
+
+Now use `vcftools` to calculate $F_{IS}$.  
+```{r engine="bash", comment = ""}
+vcftools --vcf ../snpfiltering/PopGen.vcf \
+          --keep CGA12keep.txt --out CGA12 --het
+
+vcftools --vcf ../snpfiltering/PopGen.vcf \
+          --keep CGA23keep.txt --out CGA23 --het
+
+vcftools --vcf ../snpfiltering/PopGen.vcf \
+          --keep NGAkeep.txt --out NGA --het
+
+vcftools --vcf ../snpfiltering/PopGen.vcf \
+          --keep SGAkeep.txt --out SGA --het
+```
+
+Read in the output, calculate means, ranges, and the number of individuals with $F_{IS} > 0.15$...  
+```{r summFis, crop=NULL}
+CGA12.Fis <- read.table("CGA12.het", header = TRUE)
+mean(CGA12.Fis$F)
+range(CGA12.Fis$F)
+sum(CGA12.Fis$F > 0.15)
+
+CGA23.Fis <- read.table("CGA23.het", header = TRUE)
+mean(CGA23.Fis$F)
+range(CGA23.Fis$F)
+sum(CGA23.Fis$F > 0.15)
+
+NGA.Fis <- read.table("NGA.het", header = TRUE)
+mean(NGA.Fis$F)
+range(NGA.Fis$F)
+sum(NGA.Fis$F > 0.15)
+
+SGA.Fis <- read.table("SGA.het", header = TRUE)
+mean(SGA.Fis$F)
+range(SGA.Fis$F)
+sum(SGA.Fis$F > 0.15)
+
+#Visualize the distribution of Fis
+boxplot(CGA12.Fis$F, CGA23.Fis$F, NGA.Fis$F, SGA.Fis$F,
+        names = c("CGA 2012", "CGA 2023", "NGA", "SGA"))
+
+# as density plots?
+plot(density(CGA23.Fis$F, bw = 0.05), 
+     lwd = 2, col = "darkgreen", 
+     xlim = c(-0.75, 0.75), ylim = c(0, 5.5), 
+     main = "", xlab = expression(italic(F[IS])))
+lines(density(CGA12.Fis$F, bw =0.05), lwd = 2, col = "lightgreen")
+lines(density(NGA.Fis$F, bw = 0.05), lwd = 2, col = "darkgoldenrod1")
+lines(density(SGA.Fis$F, bw = 0.05), lwd = 2, col = "lightblue")
+abline(v = mean(CGA23.Fis$F), lty = "dotted", col = "darkgreen")
+abline(v = mean(CGA12.Fis$F), lty = "dotted", col = "lightgreen")
+abline(v = mean(NGA.Fis$F), lty = "dotted", col = "darkgoldenrod1")
+abline(v = mean(SGA.Fis$F), lty = "dotted", col = "lightblue")
+abline(v = median(CGA23.Fis$F), lty = "dashed", col = "darkgreen")
+abline(v = median(CGA12.Fis$F), lty = "dashed", col = "lightgreen")
+abline(v = median(NGA.Fis$F), lty = "dashed", col = "darkgoldenrod1")
+abline(v = median(SGA.Fis$F), lty = "dashed", col = "lightblue")
+legend("topleft", lwd = 2, bty = "n", cex=0.75,
+       col = c("darkgoldenrod1","lightgreen","darkgreen","lightblue"), 
+       legend = c("NGA","CGA12","CGA23","SGA"))
+legend("topright", bty = "n", lwd = 1, cex = 0.75,
+  lty = c("dotted", "dashed"), legend = c("mean", "median"))
+```
+
+Note that, while the mean $F_{IS}$ values are quite similar across populations, the median value in contemporary CGA samples is quite a bit higher ($F_{IS} =$ `r median(CGA23.Fis$F)`).  
+
+```{r compFis, echo = FALSE}
+temp <- c(mean(NGA.Fis$F),
+          mean(CGA12.Fis$F),
+          mean(CGA23.Fis$F),
+          mean(SGA.Fis$F))
+out <- rbind(out, temp)
+rownames(out) <- c("n","K","He","Ho","Fis")
+rm(temp)
+```
+
+## Allelic Richness  
+We'll use the `pegas` R package to calculate rarefied allelic richness for each of the populations in our dataset. To do this, we first need to create VCF files for each of the groupings, rename historic samples...   
+```{r engine="bash", comment = ""}
+vcftools --vcf ../snpfiltering/PopGen.vcf --keep CGA12keep.txt --recode --out CGA12
+vcftools --vcf ../snpfiltering/PopGen.vcf --keep CGA23keep.txt --recode --out CGA23
+vcftools --vcf ../snpfiltering/PopGen.vcf --keep NGAkeep.txt --recode --out NGA
+vcftools --vcf ../snpfiltering/PopGen.vcf --keep SGAkeep.txt --recode --out SGA
+
+#Change names for CGA12 to avoid overlap with CGA23 survivors
+sed -e 's/UGA/UGAh/g' CGA12.recode.vcf > CGA12h.recode.vcf
+
+#Grab header and SNP rows
+grep -v ^## CGA12h.recode.vcf > CGA12snps
+grep -v ^## CGA23.recode.vcf | cut -f 10- > CGA23snps
+grep -v ^## NGA.recode.vcf | cut -f 10- > NGAsnps
+grep -v ^## SGA.recode.vcf | cut -f 10- > SGAsnps
+
+#Paste data columns together
+paste CGA12snps CGA23snps NGAsnps SGAsnps > tempcombined
+
+#Grab header from one of the files
+grep ^## CGA12.recode.vcf > combined.vcf
+cat tempcombined >> combined.vcf
+
+#Make an individual ID file
+grep -v ^## combined.vcf | head -1 | tr '\t' '\n' | grep ^UGA > IID.txt
+```
+
+Now read this combined vcf file into R, create a `genind` object in the R package `adegenet`, remove markers with too few individuals genotyped (below the sample size set for rarefaction), and use the `pegas` package to calculate rarefied allelic richenss...  
+```{r alleleRich}
+library(vcfR)
+library(adegenet)
+library(pegas)
+
+IID <- read.table("IID.txt", header = FALSE)
+FID <- c()
+for(i in 1:nrow(IID)) {
+  if(strsplit(IID[i,1],split="_")[[1]][1] == "UGAh") {
+    FID[i] <- samps$region[which(samps$vcfID == gsub("h","",IID[i,1]))]
+  } else {
+    FID[i] <- samps$region[which(samps$vcfID == IID[i,1])]
+  }
+
+  if(FID[i] %in% c("CGA", "CGA-H")) {
+    if(strsplit(IID[i,1],split="_")[[1]][1] == "UGAh") {
+      FID[i] <- "CGA12"
+    } else {
+      FID[i] <- "CGA23"
+    }
+  }
+}
+table(FID)
+plinkPops <- data.frame(FID=FID, IID=IID, pop=FID)
+
+vcf <- read.vcfR("combined.vcf", verbose=TRUE)
+my_genind <- vcfR2genind(vcf, pop=plinkPops$pop)
+
+n.matrix <- data.frame(
+  CGA12 = colSums(!is.na(my_genind@tab[which(my_genind@pop == "CGA12"),])),
+  CGA23 = colSums(!is.na(my_genind@tab[which(my_genind@pop == "CGA23"),])),
+  NGA = colSums(!is.na(my_genind@tab[which(my_genind@pop == "NGA"),])),
+  SGA = colSums(!is.na(my_genind@tab[which(my_genind@pop == "SGA"),]))
+)
+
+#Subset to markers with at least "rare.n.ind" individuals genotyped in all pops
+rare.n.ind <- 5
+rare.n.allele <- 2*rare.n.ind
+
+min.per.pop <- apply(n.matrix, 1, min)
+keep.loc <- unique(
+  sapply(names(min.per.pop[which(min.per.pop >= rare.n.ind)]), 
+    FUN = function(x) strsplit(x, split = ".",fixed=TRUE)[[1]][1])
+)
+my_genind2 <- my_genind[loc=keep.loc]
+sum(levels(my_genind2@loc.fac) %in% keep.loc)
+length(keep.loc)
+length(my_genind2@loc.fac)/2
+
+AR <- allelicrichness(as.loci(my_genind2), 
+                      method = "rarefaction",
+                      min.n = rare.n.allele)
+rowMeans(AR)
+```
+
+```{r compAR, echo = FALSE}
+temp <- rowMeans(AR)[c("NGA","CGA12","CGA23","SGA")]
+out <- rbind(out, temp)
+rownames(out) <- c("n","K","He","Ho","Fis","AR")
+rm(temp)
+```
+
+
+---
+
+# Summary of Results
+```{r kable}
+knitr::kable(t(out), digits = c(0,1,4,4,3,2))
+```
