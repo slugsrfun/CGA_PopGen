@@ -19,7 +19,8 @@ More specifically, the filters we'll apply here include the following:
 3. Min depth filter at the genotype level - don't call genotypes with < 10 reads
 4. Polymorphism filter - only retain loci that have exactly two alleles
 5. Remove sites with minor allele count $< 3$ and sites with $> 50$% missing data
-6. Remove SNPs that are very tightly linked ($r^2 > 0.8$ within 1kb windows).
+6. Remove SNPs that are very tightly linked ($r^2 > 0.8$ within 1kb windows)
+7. Remove samples with high levels of excess heterozygosity ($F_{IS} < -0.5$)
 
 
 *n.b.*, steps 0 through 4 are shared with the filters applied to the dataset used to identify recaptures (see filters in the [CGA_SCR repo]((https://github.com/slugsrfun/CGA_SCR)).  
@@ -367,7 +368,16 @@ colnames(snpfreq) <- c("CHROM","POS","N_ALLELES","N_CHR", "A1","A2","A3")
 biallelic <- snpfreq[which(snpfreq$N_ALLELES == 2),c(1,2)]
 nrow(biallelic)
 
-write.table(biallelic, file = "biallelic.txt",
+fixed.sites <- c(grep(":1", biallelic$A1), 
+                 grep(":1", biallelic$A2), 
+                 grep(":1", biallelic$A3))
+fixed.sites
+biallelic[fixed.sites,]
+
+confirmed.biallelic <- biallelic[-fixed.sites,c(1,2)]
+nrow(confirmed.biallelic)
+
+write.table(confirmed.biallelic, file = "biallelic.txt",
             quote = FALSE, row.names = FALSE, col.names = FALSE)
 ```
 
@@ -408,10 +418,130 @@ plink2 --vcf PopGen5.recode.vcf --out prune \
         --indep-pairwise 1 kb 1 0.8 \
         --set-all-var-ids @:# --silent
 
-plink2 --vcf PopGen5.recode.vcf --out PopGen \
+plink2 --vcf PopGen5.recode.vcf --out PopGen6 \
         --extract prune.prune.in --allow-extra-chr \
         --recode vcf-4.2 --set-all-var-ids @:# --silent
 
+```
+
+```{r echo=FALSE}
+snpct <- as.numeric(system("grep -v ^# PopGen6.vcf | wc -l", intern=TRUE))
+```
+
+
+## Step 7: Samples with Excess Heterozygosity
+Samples with very low $F$ (*i.e.*, a substantial excess of observed heterozygosity, relative to expected) may be contaminated. Here, we check for samples with $F < -0.5$ and remove them from the vcf. We then double check that remaining SNPs are still biallelic before generating our final output.  
+
+First, we need to identify the samples associated with each population and create a file that we can use to specify calculations of $F$ for only those sets of samples. This way, the expected heterozygosities will be calculated on a per-population basis.  
+```{r makeKeepLists}
+#IDs for individuals in the VCF
+vcfHead <- system("grep ^#CHROM PopGen6.vcf | tr '\t' '\n' | grep ^UGA", 
+                  intern = TRUE)
+
+#Build a popmap file to map individual samples back to their population
+popmap <- data.frame(vcfID = vcfHead, ugaID = NA)
+popmap$region <- popmap$year <- NA
+popmap$survivor <- popmap$finalClone <- NA
+for(i in 1:nrow(popmap)) {
+  popmap$region[i] <- samps$region[which(samps$vcfID== popmap$vcfID[i])]
+  popmap$ugaID[i] <- samps$ugaID[which(samps$vcfID== popmap$vcfID[i])]
+  popmap$year[i] <- samps$year[which(samps$vcfID== popmap$vcfID[i])]
+  popmap$finalClone[i] <- samps$finalClone[which(samps$vcfID== popmap$vcfID[i])]
+  #How many regions for this clone?
+  nReg <- length(unique(samps$region[which(samps$finalClone==popmap$finalClone[i])]))
+  if(nReg > 1) {
+    popmap$survivor[i] <- TRUE
+  } else {
+    popmap$survivor[i] <- FALSE
+  }
+}
+nrow(popmap)
+
+#Subsets for each population
+CGA12pop <- popmap[which(popmap$region== "CGA-H" | popmap$survivor== TRUE),]
+CGA23pop <- popmap[which(popmap$region== "CGA" | popmap$survivor== TRUE),]
+NGApop <- popmap[popmap$region== "NGA",]
+SGApop <- popmap[popmap$region== "SGA",]
+
+#Write files for population-level F calculations
+write.table(CGA12pop$vcfID, file = "CGA12_Fcheck.txt",
+            quote = FALSE,row.names = FALSE,col.names = FALSE)
+write.table(CGA23pop$vcfID, file = "CGA23_Fcheck.txt",
+            quote = FALSE,row.names = FALSE,col.names = FALSE)
+write.table(NGApop$vcfID, file = "NGA_Fcheck.txt",
+            quote = FALSE,row.names = FALSE,col.names = FALSE)
+write.table(SGApop$vcfID, file = "SGA_Fcheck.txt",
+            quote = FALSE,row.names = FALSE,col.names = FALSE)
+```
+
+Then we calculate $F$ for each subset...  
+```{r engine="bash", comment = ""}
+vcftools --vcf PopGen6.vcf --keep CGA12_Fcheck.txt --out CGA12_Fcheck --het
+vcftools --vcf PopGen6.vcf --keep CGA23_Fcheck.txt --out CGA23_Fcheck --het
+vcftools --vcf PopGen6.vcf --keep NGA_Fcheck.txt --out NGA_Fcheck --het
+vcftools --vcf PopGen6.vcf --keep SGA_Fcheck.txt --out SGA_Fcheck --het
+```
+
+Read these files into R and create a list of samples to remove...  
+```{r checkF}
+#Then read these outputs into R & check range of F
+CGA12 <- read.table("CGA12_Fcheck.het", header = TRUE)
+range(CGA12$F)
+CGA23 <- read.table("CGA23_Fcheck.het", header = TRUE)
+range(CGA23$F)
+NGA <- read.table("NGA_Fcheck.het", header = TRUE)
+range(NGA$F)
+SGA <- read.table("SGA_Fcheck.het", header = TRUE)
+range(SGA$F)
+
+#Remove samples with F < -0.5
+drop.us <- CGA23$INDV[which(CGA23$F < -0.5)]
+drop.us 
+
+#Write a file with IDs to remove
+write.table(drop.us, file = "lowFfilt.txt", quote=FALSE, row.names=FALSE, col.names=FALSE)
+```
+
+
+Remove the samples from the VCF and check that all loci are still biallelic...  
+```{r engine="bash", comment = ""}
+vcftools --vcf PopGen6.vcf --remove lowFfilt.txt --out PopGen7 --recode
+vcftools --vcf PopGen7.recode.vcf --out PopGen7 --freq
+```
+
+Read this output into R and confirm that all loci are biallelic in this sample.  
+```{r checkPoly2}
+#Read frequency file into R
+snpfreq <- read.table("PopGen7.frq", skip = 1, fill=TRUE)
+colnames(snpfreq) <- c("CHROM","POS","N_ALLELES","N_CHR", "A1","A2")
+
+#Which loci are reported as biallelic?
+biallelic <- snpfreq[which(snpfreq$N_ALLELES == 2),]
+nrow(biallelic)
+
+#Are any of these fixed (freq of A1 or A2 = 1)?
+fixed.sites <- c(grep(":1", biallelic$A1), grep(":1", biallelic$A2))
+fixed.sites
+
+#Fixed sites should also be removed
+biallelic[fixed.sites,]
+
+#List of sites that are indeed biallelic in the final dataset
+confirmed.biallelic <- biallelic[-fixed.sites,c(1,2)]
+nrow(confirmed.biallelic)
+
+#Write a file for vcftools to filter to these sites...
+write.table(confirmed.biallelic, file = "confirmed.biallelic.txt",
+            quote = FALSE, row.names = FALSE, col.names = FALSE)
+```
+
+Now back to bash one last time to write the final output...  
+```{r engine="bash", comment = ""}
+vcftools --vcf PopGen7.recode.vcf --out PopGen \
+          --positions confirmed.biallelic.txt \
+          --remove-filtered-all --recode
+          
+mv PopGen.recode.vcf PopGen.vcf
 ```
 
 ```{r echo=FALSE}
@@ -425,12 +555,6 @@ A few summaries of the dataset. At this point we have `r snpct` variable sites i
 vcftools --vcf PopGen.vcf --out PopGen --hardy
 ```
 
-
-```{r echo=FALSE}
-snpct <- as.numeric(system("grep -v ^# PopGen.vcf | wc -l", intern=TRUE))
-```
-After verifying that all retained SNPs are bi-allelic, there are `r snpct` sites in the file.  
-
 How many sites are out of HWE?  
 ```{r checkHWE}
 hwe.res <- read.table("PopGen.hwe", header = TRUE)
@@ -441,7 +565,7 @@ legend("topleft", bty = "n", legend = c(paste("n =", nrow(hwe.res), "SNPs"),
                                               round(min(hwe.res$P_HWE),3))))
 ```
 
-Downstream analyses are presented in `diversity`, `structure`, and `effectiveSize`.  
+Downstream analyses are presented in `2_diversity`, `3_structure`, and `4_effectiveSize`.  
 
 ---
 
