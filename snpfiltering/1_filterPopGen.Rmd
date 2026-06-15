@@ -365,7 +365,7 @@ Now read this file into R and identify sites that have exactly two alleles in th
 ```{r biallelic}
 snpfreq <- read.table("PopGen3.frq", skip = 1, fill=TRUE)
 colnames(snpfreq) <- c("CHROM","POS","N_ALLELES","N_CHR", "A1","A2","A3")
-biallelic <- snpfreq[which(snpfreq$N_ALLELES == 2),c(1,2)]
+biallelic <- snpfreq[which(snpfreq$N_ALLELES == 2),]
 nrow(biallelic)
 
 fixed.sites <- c(grep(":1", biallelic$A1), 
