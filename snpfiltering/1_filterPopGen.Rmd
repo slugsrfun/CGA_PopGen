@@ -422,6 +422,7 @@ plink2 --vcf PopGen5.recode.vcf --out PopGen6 \
         --extract prune.prune.in --allow-extra-chr \
         --recode vcf-4.2 --set-all-var-ids @:# --silent
 
+grep -v ^# PopGen6.vcf | wc -l
 ```
 
 ```{r echo=FALSE}
@@ -521,10 +522,10 @@ nrow(biallelic)
 
 #Are any of these fixed (freq of A1 or A2 = 1)?
 fixed.sites <- c(grep(":1", biallelic$A1), grep(":1", biallelic$A2))
-fixed.sites
+length(fixed.sites)
 
 #Fixed sites should also be removed
-biallelic[fixed.sites,]
+biallelic[fixed.sites[1:10],]
 
 #List of sites that are indeed biallelic in the final dataset
 confirmed.biallelic <- biallelic[-fixed.sites,c(1,2)]
