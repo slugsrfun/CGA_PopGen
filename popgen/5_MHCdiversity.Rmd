@@ -9,7 +9,7 @@ linkcolor: blue
 ---
 
 # Characterizing Diversity at MHC Loci
-The major histocompatibility complex (MHC) is an important component of the immune response in vertebrates. Numerous previous studies have  documented evidence of balancing selection acting on the region. Given its role in adaptive immunity, levels of genetic diversity within the region are especially important to assess in populations of conservation concern. With this in mind, the probe panel used in our project included several probes designed to target MHC loci. The following references were used during [probe design](https://docs.google.com/spreadsheets/d/10tIu7FyFX5RChB88E4G4GSgiBU7_5Ciymitw1_f5u60/edit?usp=sharing) for this project.
+The major histocompatibility complex (MHC) is an important component of the immune response in vertebrates. Numerous previous studies have documented evidence of balancing selection acting on the region. Given its role in adaptive immunity, levels of genetic diversity within the region are especially important to assess in populations of conservation concern. With this in mind, the probe panel used in our project included several probes designed to target MHC loci. The following references were used during [probe design](https://docs.google.com/spreadsheets/d/10tIu7FyFX5RChB88E4G4GSgiBU7_5Ciymitw1_f5u60/edit?usp=sharing) for this project.
 
 1. [Goda et al. (2010)](https://doi.org/10.1111/j.1399-0039.2010.01528.x) - MHC class II *DRB* genes in Ursidae, evidence for balancing selection on the locus, likely duplicated (3 alleles detected) in *U. americanus*.
 2. [Yasukochi et al. (2010)](https://doi.org/10.1266/ggs.85.147) - successfully sequenced expressed portions of the MHC class II *DQB* gene in *U. thibetanus*, identified exon 2
@@ -34,19 +34,20 @@ We'll extract the coding sequences from these windows and summarize diversity in
 ---
 
 # Extracting MHC markers
-This chunk of code creates `.bed` files for extracting the markers around exons 2 and 6 with `vcftools`. We'll start with the `PopGen0.recode.vcf` file that served as the beginning point for our filtering in `18_filterPopGen`. This file has had duplicate SNPs, half-calls, indels, and duplicate genotypes (as identified in `10_recapFinal`) removed, but no other filters applied. First, we extract SNPs within these regions to identify boundaries of the translated sequence, later we will apply some filters for SNP quality and genotype depth.  
+This chunk of code creates `.bed` files for extracting the markers around exons 2 and 6 with `vcftools`. We'll start with the `PopGen0.recode.vcf` file that served as the beginning point for our filtering in `1_filterPopGen`. This file has had duplicate SNPs, half-calls, indels, and duplicate genotypes removed, but no other filters applied. We also want to drop samples with high levels of excess heterozygosity, so we'll retain only samples present in `PopGen.vcf`. First, we extract SNPs within these regions to identify boundaries of the translated sequence, later we will apply some filters for SNP quality and genotype depth.  
 ```{r engine="bash", comment =""}
+grep ^#CHROM ../snpfiltering/PopGen.vcf | tr '\t' '\n' | grep ^UGA > keepUs.txt
 #DQB exon 2: NW_025577149.1:1531301-1531698
 echo 'CHROM START END' > DQBex2.bed
 echo 'NW_025577149.1 1531300 1531699' >> DQBex2.bed
 vcftools --vcf ../snpfiltering/PopGen0.recode.vcf \
-          --bed DQBex2.bed --out DQBex2 --recode
+          --bed DQBex2.bed --keep keepUs.txt --out DQBex2 --recode
 
 #DQB exon 6: NW_025577149.1:1535166-1535535
 echo 'CHROM START END' > DQBex6.bed
 echo 'NW_025577149.1 1535165 1535536' >> DQBex6.bed
 vcftools --vcf ../snpfiltering/PopGen0.recode.vcf \
-          --bed DQBex6.bed --out DQBex6 --recode
+          --bed DQBex6.bed --keep keepUs.txt --out DQBex6 --recode
 ```
 
 # Annotate SNPs in these regions
@@ -158,9 +159,19 @@ snpfreq <- snpfreq[-1,]
 colnames(snpfreq) <- c("CHROM","POS","N_ALLELES","N_CHR", "A1","A2","A3")
 snpfreq
 
-biallelic <- snpfreq[which(snpfreq$N_ALLELES == 2),c(1,2)]
+biallelic <- snpfreq[which(snpfreq$N_ALLELES == 2),]
 nrow(biallelic)
-write.table(biallelic, file = "DQBex2_biallelic.txt",
+
+fixed.sites <- c(grep(":1", biallelic$A1), 
+                 grep(":1", biallelic$A2), 
+                 grep(":1", biallelic$A3))
+fixed.sites
+biallelic[fixed.sites,]
+
+confirmed.biallelic <- biallelic[-fixed.sites,c(1,2)]
+nrow(confirmed.biallelic)
+
+write.table(confirmed.biallelic, file = "DQBex2_biallelic.txt",
             quote = FALSE, row.names = FALSE, col.names = FALSE)
 ```
 
@@ -598,262 +609,7 @@ rownames(out) <- c("n","K_hap","H_hap","Ho_hap")
 rm(temp, temp2, temp3)
 ```
 
-# SNP-based summaries
-Returning to the unphased `.vcf` file (without genotype imputation) for SNP-based genetic diversity measures.  
-```{r engine="bash", comment=""}
-plink --vcf DQBex2_final.recode.vcf --recodeA --out DQBex2 \
-      --double-id --allow-extra-chr --silent
-```
 
-Now read the `.raw` file in and create objects for each population (accounting for survivors)...  
-```{r createSNPobj}
-rawsnp <- read.table("DQBex2.raw", header = TRUE)
-which(colnames(rawsnp) == "PHENOTYPE")
-DQBsnp <- rawsnp[,-c(1:6)]
-DQBsnp[is.na(DQBsnp)] <- -1
-
-colnames(DQBsnp) <- paste0("loc",c(1:ncol(DQBsnp)))
-
-nrow(rawsnp)
-sum(hap.out$vcfID == rawsnp$IID)
-
-DQBmeta <- data.frame(pop=hap.out$pop,
-                      vcfID=hap.out$vcfID,
-                      survivor=hap.out$survivor)
-
-#Use the hap.out object since the rows are in the same order
-DQB <- cbind(DQBmeta, DQBsnp)
-DQB_NGA <- DQB[which(DQB$pop == "NGA"),]
-nrow(DQB_NGA)
-DQB_SGA <- DQB[which(DQB$pop == "SGA"),]
-nrow(DQB_SGA)
-DQB_CGA12 <- DQB[which(DQB$pop == "CGA-H" | DQB$survivor == TRUE),]
-nrow(DQB_CGA12)
-DQB_CGA23 <- DQB[which(DQB$pop == "CGA" | DQB$survivor == TRUE),]
-nrow(DQB_CGA23)
-```
-
-## SNP polymorphism
-Record the number of SNPs that are variable within each of the four populations...  
-```{r polySNPs}
-#Function to check polymorphism
-is.poly <- function(x) {
-  if(any(x == 1)) { #If any individual is a heterozygote
-    out <- TRUE
-  } else if(any(x == 0) & any(x == 2)) { #If both homozygotes are observed
-      out <- TRUE
-  } else { #If no hets and both homozygotes NOT observed, not polymorphic
-    out <- FALSE
-  }
-  return(out)
-}
-
-#Polymorhpic SNP numbers per population
-sum(apply(DQB_NGA[,-c(1:3)], 2, FUN=is.poly))
-sum(apply(DQB_CGA12[,-c(1:3)], 2, FUN=is.poly))
-sum(apply(DQB_CGA23[,-c(1:3)], 2, FUN=is.poly))
-sum(apply(DQB_SGA[,-c(1:3)], 2, FUN=is.poly))
-```
-
-```{r compPoly, echo = FALSE}
-temp <- data.frame(NGA = sum(apply(DQB_NGA[,-c(1:3)], 2, FUN=is.poly)),
-                  CGA12 = sum(apply(DQB_CGA12[,-c(1:3)], 2, FUN=is.poly)),
-                  CGA23 = sum(apply(DQB_CGA23[,-c(1:3)], 2, FUN=is.poly)),
-                  SGA = sum(apply(DQB_SGA[,-c(1:3)], 2, FUN=is.poly)))
-out <- rbind(out, temp)
-rownames(out) <- c("n","K_hap","H_hap","Ho_hap","K_snp")
-rm(temp)
-```
-
-## Expected heterozygosity ($H_e$)
-Calculate allele frequencies per locus, then expected heterozygosity of that locus. We include comparisons across populations at all SNPs in the `.vcf` file and comparisons that limit the analysis to SNP loci that were polymorhpic in all three populations (central, north, and south Georgia)...  
-```{r He}
-getHe <- function(x) {
-  frq <- sum(x[x > -1])/(2*(sum(x > -1)))
-  He.loc <- 2*frq*(1-frq)
-  return(He.loc)
-}
-
-mean(apply(DQB_NGA[,-c(1:3)], 2, FUN=getHe), na.rm = TRUE)
-mean(apply(DQB_CGA12[,-c(1:3)], 2, FUN=getHe), na.rm = TRUE)
-mean(apply(DQB_CGA23[,-c(1:3)], 2, FUN=getHe), na.rm = TRUE)
-mean(apply(DQB_SGA[,-c(1:3)], 2, FUN=getHe), na.rm = TRUE)
-
-#What if we only consider SNPs that are polymorphic in all populations?
-polymorphic <- data.frame(NGA = apply(DQB_NGA[,-c(1:3)], 2, FUN=is.poly),
-                          CGA = apply(DQB_CGA23[,-c(1:3)], 2, FUN=is.poly),
-                          SGA = apply(DQB_SGA[,-c(1:3)], 2, FUN=is.poly))
-allpolySNPs <- which(rowSums(polymorphic) == 3)
-
-#More comparable if we limit to SNPs that are polymorhpic in all pops?
-mean(apply(DQB_NGA[,allpolySNPs], 2, FUN=getHe), na.rm = TRUE)
-mean(apply(DQB_CGA12[,allpolySNPs], 2, FUN=getHe), na.rm = TRUE)
-mean(apply(DQB_CGA23[,allpolySNPs], 2, FUN=getHe), na.rm = TRUE)
-mean(apply(DQB_SGA[,allpolySNPs], 2, FUN=getHe), na.rm = TRUE)
-
-```
-
-Limiting to SNPs that are polymorphic in all populations has some minor effects on $H_e$, as expected, increasing the values in the undersampled populations slightly.  
-```{r compHe, echo = FALSE}
-temp <- data.frame(NGA=mean(apply(DQB_NGA[,-c(1:3)], 2, FUN=getHe), na.rm = TRUE),
-                   CGA12=mean(apply(DQB_CGA12[,-c(1:3)], 2, FUN=getHe), na.rm = TRUE),
-                   CGA23=mean(apply(DQB_CGA23[,-c(1:3)], 2, FUN=getHe), na.rm = TRUE),
-                   SGA=mean(apply(DQB_SGA[,-c(1:3)], 2, FUN=getHe), na.rm = TRUE))
-out <- rbind(out, temp)
-rownames(out) <- c("n","K_hap","H_hap","Ho_hap","K_snp", "He_snp")
-rm(temp)
-```
-
-## Observed Heterozygosity ($H_o$)
-Calculate observed heterozygosity (# hets / # genotyped) per locus, then average across loci. Again we include estimates using all SNPs and those using only the `r length(allpolySNPs)` loci that were polymorhpic in all three populations.  
-```{r Ho}
-#Calculating per locus, then averaging across loci
-getHo <- function(x) {
-  n.hets <- sum(x == 1)
-  n.geno <- sum(x > -1)
-  Ho.loc <- n.hets/n.geno
-  return(Ho.loc)
-}
-
-mean(apply(DQB_NGA[,-c(1:3)], 2, FUN=getHo), na.rm = TRUE)
-mean(apply(DQB_CGA12[,-c(1:3)], 2, FUN=getHo), na.rm = TRUE)
-mean(apply(DQB_CGA23[,-c(1:3)], 2, FUN=getHo), na.rm = TRUE)
-mean(apply(DQB_SGA[,-c(1:3)], 2, FUN=getHo), na.rm = TRUE)
-
-#More comparable if we limit to SNPs that are polymorhpic in all pops?
-mean(apply(DQB_NGA[,allpolySNPs], 2, FUN=getHo), na.rm = TRUE)
-mean(apply(DQB_CGA12[,allpolySNPs], 2, FUN=getHo), na.rm = TRUE)
-mean(apply(DQB_CGA23[,allpolySNPs], 2, FUN=getHo), na.rm = TRUE)
-mean(apply(DQB_SGA[,allpolySNPs], 2, FUN=getHo), na.rm = TRUE)
-```
-Limiting the dataset to SNPs that are polymorphic across the three GA populations does not have major impacts on the $H_o$ values. With that in mind, we'll use the full set of SNPs in the summary report at the end of the markdown.  
-
-```{r compHo, echo = FALSE}
-temp <- c(mean(apply(DQB_NGA[,-c(1:3)], 2, FUN=getHo), na.rm = TRUE),
-          mean(apply(DQB_CGA12[,-c(1:3)], 2, FUN=getHo), na.rm = TRUE),
-          mean(apply(DQB_CGA23[,-c(1:3)], 2, FUN=getHo), na.rm = TRUE),
-          mean(apply(DQB_SGA[,-c(1:3)], 2, FUN=getHo), na.rm = TRUE))
-out <- rbind(out, temp)
-rownames(out) <- c("n","K_hap","H_hap","Ho_hap","K_snp", "He_snp", "Ho_snp")
-rm(temp)
-```
-
-## Allelic Richness  
-With rarefaction to a sample smaller than the smallest sample size in the dataset...  
-
-First sort the VCF by population...  
-```{r makeMHCkeep}
-write.table(CGA12haps$vcfID, file = "CGA12mhckeep.txt", 
-            quote = FALSE, 
-            row.names = FALSE,
-            col.names = FALSE)
-write.table(CGA23haps$vcfID, file = "CGA23mhckeep.txt", 
-            quote = FALSE, 
-            row.names = FALSE,
-            col.names = FALSE)
-write.table(NGAhaps$vcfID, file = "NGAmhckeep.txt", 
-            quote = FALSE, 
-            row.names = FALSE,
-            col.names = FALSE)
-write.table(SGAhaps$vcfID, file = "SGAmhckeep.txt", 
-            quote = FALSE, 
-            row.names = FALSE,
-            col.names = FALSE)
-```
-
-Now extract each population into its own `.vcf` file and rename the historic samples so survivors are present in both 2012 and 2023 populations...  
-```{r engine="bash", comment=""}
-vcftools --vcf DQBex2_final.recode.vcf --keep CGA12mhckeep.txt \
-          --recode --out DQBex2_CGA12
-vcftools --vcf DQBex2_final.recode.vcf --keep CGA23mhckeep.txt \
-          --recode --out DQBex2_CGA23
-vcftools --vcf DQBex2_final.recode.vcf --keep NGAmhckeep.txt \
-          --recode --out DQBex2_NGA
-vcftools --vcf DQBex2_final.recode.vcf --keep SGAmhckeep.txt \
-          --recode --out DQBex2_SGA
-
-#Change names for CGA12 to avoid overlap with CGA23 survivors
-sed -e 's/UGA/UGAh/g' DQBex2_CGA12.recode.vcf > DQBex2_CGA12h.recode.vcf
-
-#Grab header and SNP rows
-grep -v ^## DQBex2_CGA12h.recode.vcf > DQB_CGA12snps
-grep -v ^## DQBex2_CGA23.recode.vcf | cut -f 10- > DQB_CGA23snps
-grep -v ^## DQBex2_NGA.recode.vcf | cut -f 10- > DQB_NGAsnps
-grep -v ^## DQBex2_SGA.recode.vcf | cut -f 10- > DQB_SGAsnps
-
-#Paste data columns together
-paste DQB_CGA12snps DQB_CGA23snps DQB_NGAsnps DQB_SGAsnps > DQBex2_tempcombined
-
-#Grab header from one of the files
-grep ^## DQBex2_CGA12.recode.vcf > DQBex2_combined.vcf
-cat DQBex2_tempcombined >> DQBex2_combined.vcf
-
-#Make an individual ID file
-grep -v ^## DQBex2_combined.vcf | head -1 | tr '\t' '\n' | grep ^UGA > mhcIID.txt
-```
-
-Now read this combined vcf file into R, create a `genind` object in the R package `adegenet`, remove markers with too few individuals genotyped (below the sample size set for rarefaction), and use the `pegas` package to calculate rarefied allelic richenss...  
-```{r alleleRich}
-library(vcfR)
-library(adegenet)
-library(pegas)
-
-IID <- read.table("mhcIID.txt", header = FALSE)
-FID <- c()
-for(i in 1:nrow(IID)) {
-  if(strsplit(IID[i,1],split="_")[[1]][1] == "UGAh") {
-    FID[i] <- samps$region[which(samps$vcfID == gsub("h","",IID[i,1]))]
-  } else {
-    FID[i] <- samps$region[which(samps$vcfID == IID[i,1])]
-  }
-
-  if(FID[i] %in% c("CGA", "CGA-H")) {
-    if(strsplit(IID[i,1],split="_")[[1]][1] == "UGAh") {
-      FID[i] <- "CGA-H"
-    } else {
-      FID[i] <- "CGA"
-    }
-  }
-}
-table(FID)
-plinkPops <- data.frame(FID=FID, IID=IID, pop=FID)
-
-vcf <- read.vcfR("DQBex2_combined.vcf", verbose=TRUE)
-my_genind <- vcfR2genind(vcf, pop=plinkPops$pop)
-
-n.matrix <- data.frame(
-  CGA12 = colSums(!is.na(my_genind@tab[which(my_genind@pop == "CGA-H"),])),
-  CGA23 = colSums(!is.na(my_genind@tab[which(my_genind@pop == "CGA"),])),
-  NGA = colSums(!is.na(my_genind@tab[which(my_genind@pop == "NGA"),])),
-  SGA = colSums(!is.na(my_genind@tab[which(my_genind@pop == "SGA"),]))
-)
-
-#Subset to markers with at least "rare.n.ind" individuals genotyped in all pops
-rare.n.ind <- 5
-rare.n.allele <- 2*rare.n.ind
-
-min.per.pop <- apply(n.matrix, 1, min)
-keep.loc <- unique(
-  sapply(names(min.per.pop[which(min.per.pop >= rare.n.ind)]), 
-    FUN = function(x) strsplit(x, split = ".",fixed=TRUE)[[1]][1])
-)
-my_genind2 <- my_genind[loc=keep.loc]
-sum(levels(my_genind2@loc.fac) %in% keep.loc)
-length(keep.loc)
-length(my_genind2@loc.fac)/2
-
-AR <- allelicrichness(as.loci(my_genind2), 
-                      method = "rarefaction",
-                      min.n = rare.n.allele)
-rowMeans(AR)
-```
-
-```{r compAR, echo = FALSE}
-temp <- rowMeans(AR)[c("NGA","CGA-H","CGA","SGA")]
-out <- rbind(out, temp)
-rownames(out) <- c("n","K_hap","H_hap","Ho_hap","K_snp", "He_snp", "Ho_snp","AR")
-rm(temp)
-```
 
 # Predicted effects of mutations
 Given the filters applied above and the lack of sequence data for exon 2 of the *DQB* gene, we will not attempt to calculate a $\frac{d_N}{d_S}$ ratio from the `snpEff` annotation. Methods to calculate these ratios typically require aligned sequences, rather than a `.vcf` file with only SNP loci. While the `snpEff` annotation does tell us about the number of non-synonymous substitutions, it does not tell us about the possible number of mutations at each site that would have led to synonymous and non-synonymous changes. Thus, we will focus on a simple summary of the numbers of synonymous and non-synonymous mutations that underlie the polymorphic SNP loci in each population.  
@@ -896,16 +652,16 @@ temp <- data.frame(NGA=length(grep("missense",NGAanns)),
                    CGA23=length(grep("missense",CGA23anns)),
                    SGA=length(grep("missense",SGAanns)))
 out <- rbind(out, temp)
-rownames(out) <- c("n","K_hap","H_hap","Ho_hap","K_snp", "He_snp", "Ho_snp","AR","missense")
+rownames(out) <- c("n","K_hap","H_hap","Ho_hap","missense")
 rm(temp)
 ```
 
 ---
 
 # Summary
-Diversity at SNPs in exon 2 of the MHC class II gene *DQB* is lower in central GA than in north GA (particularly when considering $H_e$, $H_o$, and allelic richness). However, haplotype diversity and observed heterozygosity at the haplotype-level is still fairly high in central GA. Overall, central GA has retained a surprising amount of diversity in exon 2 of *DQB*. Furthermore, the haplotype network and neighbor-joining tree show that variants segregating in the central GA population are not particularly tightly clustered.  
+Diversity at SNPs in exon 2 of the MHC class II gene *DQB* is lower in central GA than in north GA (particularly when considering $H_e$, $H_o$, and allelic richness). However, haplotype diversity and observed heterozygosity are both fairly high in central GA. Overall, central GA has retained a surprising amount of diversity in exon 2 of *DQB*. Furthermore, the haplotype network and neighbor-joining tree show that variants segregating in the central GA population are not particularly tightly clustered. However, many of the variants in central GA are present at low frequencies.  
 ```{r kable}
-knitr::kable(t(out), digits = c(0,0,3,3,0,3,3,2,0))
+knitr::kable(t(out), digits = c(0,0,3,3,0))
 ```
 
 ---
