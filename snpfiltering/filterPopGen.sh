@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=filterPopGen
+#SBATCH --job-name=filtPG
 #SBATCH --partition=batch
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
