@@ -164,8 +164,8 @@ cat ../input/CGA_option.txt
 Now run NeEstimator with these files, this doesn't take too terribly long...  
 
 *n.b.*, this chunk did not work on the UGA cluster. Repeated errors that NeEstimator exited with status 134. However, the program generates the expected output. Setting `eval=FALSE` in this chunk header and using output from the first submission (earlier today) in the generation of the markdown.  
-```{r NeStep}
-NeEst="/home/jdrobins/Software/NeEstimator2.X/Ne2L"
+```{r engine="bash", comment = ""}
+NeEst="/home/jdrobins/Software/NeEstimator2.X/Ne2L" 
 $NeEst i:../input/CGA_info.txt o:../input/CGA_option.txt
 ```
 
