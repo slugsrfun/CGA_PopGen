@@ -617,6 +617,40 @@ rm(temp, temp2, temp3)
 
 # Predicted effects of mutations
 Given the filters applied above and the lack of sequence data for exon 2 of the *DQB* gene, we will not attempt to calculate a $\frac{d_N}{d_S}$ ratio from the `snpEff` annotation. Methods to calculate these ratios typically require aligned sequences, rather than a `.vcf` file with only SNP loci. While the `snpEff` annotation does tell us about the number of non-synonymous substitutions, it does not tell us about the possible number of mutations at each site that would have led to synonymous and non-synonymous changes. Thus, we will focus on a simple summary of the numbers of synonymous and non-synonymous mutations that underlie the polymorphic SNP loci in each population.  
+
+First, create `.vcf` files for each population.  
+```{r makeMHCkeep}
+write.table(CGA12haps$vcfID, file = "CGA12mhckeep.txt", 
+            quote = FALSE, 
+            row.names = FALSE,
+            col.names = FALSE)
+write.table(CGA23haps$vcfID, file = "CGA23mhckeep.txt", 
+            quote = FALSE, 
+            row.names = FALSE,
+            col.names = FALSE)
+write.table(NGAhaps$vcfID, file = "NGAmhckeep.txt", 
+            quote = FALSE, 
+            row.names = FALSE,
+            col.names = FALSE)
+write.table(SGAhaps$vcfID, file = "SGAmhckeep.txt", 
+            quote = FALSE, 
+            row.names = FALSE,
+            col.names = FALSE)
+```
+
+Now extract each population into its own `.vcf` file and rename the historic samples so survivors are present in both 2012 and 2023 populations...  
+```{r engine="bash", comment=""}
+vcftools --vcf DQBex2_final.recode.vcf --keep CGA12mhckeep.txt \
+          --recode --out DQBex2_CGA12
+vcftools --vcf DQBex2_final.recode.vcf --keep CGA23mhckeep.txt \
+          --recode --out DQBex2_CGA23
+vcftools --vcf DQBex2_final.recode.vcf --keep NGAmhckeep.txt \
+          --recode --out DQBex2_NGA
+vcftools --vcf DQBex2_final.recode.vcf --keep SGAmhckeep.txt \
+          --recode --out DQBex2_SGA
+```
+
+Now calculate allele frequencies for each population...  
 ```{r engine="bash",comment=""}
 vcftools --vcf DQBex2_CGA12.recode.vcf --mac 1 --freq --out DQBex2_CGA12
 vcftools --vcf DQBex2_CGA23.recode.vcf --mac 1 --freq --out DQBex2_CGA23
