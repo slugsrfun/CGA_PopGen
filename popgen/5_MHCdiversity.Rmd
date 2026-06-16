@@ -697,7 +697,7 @@ rm(temp)
 ---
 
 # Summary
-Diversity at SNPs in exon 2 of the MHC class II gene *DQB* is lower in central GA than in north GA (particularly when considering $H_e$, $H_o$, and allelic richness). However, haplotype diversity and observed heterozygosity are both fairly high in central GA. Overall, central GA has retained a surprising amount of diversity in exon 2 of *DQB*. Furthermore, the haplotype network and neighbor-joining tree show that variants segregating in the central GA population are not particularly tightly clustered. However, many of the variants in central GA are present at low frequencies.  
+Haplotype diversity and observed heterozygosity are both fairly high in central GA. Overall, central GA has retained a surprising amount of diversity in exon 2 of *DQB*. Furthermore, the haplotype network and neighbor-joining tree show that variants segregating in the central GA population are not particularly tightly clustered. However, many of the variants in central GA are present at low frequencies.  
 ```{r kable}
 knitr::kable(t(out), digits = c(0,0,3,3,0))
 ```
