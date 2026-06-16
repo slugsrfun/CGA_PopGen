@@ -1,0 +1,28 @@
+PLINK v1.9.0-b.8 64-bit (22 Oct 2024)
+Options in effect:
+  --allow-extra-chr
+  --double-id
+  --out ADMIX
+  --recode 12
+  --silent
+  --vcf structure.vcf
+
+Hostname: d2-1
+Working directory: /scratch/jdrobins/CGA_PopGen/popgen
+Start time: Mon Jun 15 15:19:11 2026
+
+Random number seed: 1781551151
+95262 MB RAM detected; reserving 47631 MB for main workspace.
+--vcf: ADMIX-temporary.bed + ADMIX-temporary.bim + ADMIX-temporary.fam written.
+10717 variants loaded from .bim file.
+238 people (0 males, 0 females, 238 ambiguous) loaded from .fam.
+Ambiguous sex IDs written to ADMIX.nosex .
+Using 1 thread.
+Before main variant filters, 238 founders and 0 nonfounders present.
+Calculating allele frequencies... done.
+Total genotyping rate is 0.799413.
+10717 variants and 238 people pass filters and QC.
+Note: No phenotypes present.
+--recode ped to ADMIX.ped + ADMIX.map ... done.
+
+End time: Mon Jun 15 15:19:11 2026
