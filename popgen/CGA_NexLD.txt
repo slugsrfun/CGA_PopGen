@@ -1,0 +1,22 @@
+Output from NeEstimator v.2
+Starting time: Tue Jun 16 08:56:44 2026
+Input File: "CGA_GPfile.txt"
+
+Number of Loci = 10717
+
+
+LINKAGE DISEQUILIBRIUM METHOD, Mating Model: Random
+
+Lowest allele frequency used:   0.0500
+Up to 17 rightmost characters are shown for Population name.
+-------------------------------------------------------------
+                   	         	      	             	            	         	          	         	    Parametric CI		    Jackknife CI
+Population [#:Name]	Samp Size	Weighted Mean	Ind. Alleles	    r^2  	  Exp(r^2)	     Ne  	       Low	      High	       Low	      High	  (Eff.df)
+1:336-23           	     15  	       8.9   	   1502017  	 0.146174	  0.142804	     89.7	      81.5	      99.6	       4.2	  Infinite	       146
+2:336-23           	    165  	     118.6   	    904032  	 0.015393	  0.008492	     46.1	      45.8	      46.5	      38.5	      55.8	      1232
+3:80-NGA           	     31  	      25.7   	   3035676  	 0.044377	  0.042415	    155.3	     149.8	     161.1	      54.6	  Infinite	      1385
+4:42-SGA           	     26  	      20.2   	   2993825  	 0.053398	  0.052979	    733.1	     608.4	     921.2	      64.8	  Infinite	      1388
+
+Ending time: Tue Jun 16 09:04:37 2026
+-------------------------------------
+
