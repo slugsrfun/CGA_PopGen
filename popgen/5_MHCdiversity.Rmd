@@ -165,12 +165,16 @@ nrow(biallelic)
 fixed.sites <- c(grep(":1", biallelic$A1), 
                  grep(":1", biallelic$A2), 
                  grep(":1", biallelic$A3))
-fixed.sites
-biallelic[fixed.sites,]
 
-confirmed.biallelic <- biallelic[-fixed.sites,c(1,2)]
+if(length(fixed.sites) > 0) {
+  fixed.sites
+  biallelic[fixed.sites,]
+  confirmed.biallelic <- biallelic[-fixed.sites,c(1,2)]  
+} else {
+  confirmed.biallelic <- biallelic
+}
+
 nrow(confirmed.biallelic)
-
 write.table(confirmed.biallelic, file = "DQBex2_biallelic.txt",
             quote = FALSE, row.names = FALSE, col.names = FALSE)
 ```
