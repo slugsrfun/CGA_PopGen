@@ -372,26 +372,26 @@ for(haplo in pophapcnts$hapID) {
   #print(hap)
   #NGA frequencies
   pophapcnts$NGA[haplo] <- 
-    sum(c(hap.out$allele1[hap.out$pop=="NGA"],
-          hap.out$allele2[hap.out$pop=="NGA"]) == 
+    sum(c(hap.out$allele1[which(hap.out$pop=="NGA")],
+          hap.out$allele2[which(hap.out$pop=="NGA")]) == 
           pophapcnts$DQBex2Hap[haplo])
   
   #SGA frequencies
   pophapcnts$SGA[haplo] <- 
-    sum(c(hap.out$allele1[hap.out$pop=="SGA"],
-          hap.out$allele2[hap.out$pop=="SGA"]) == 
+    sum(c(hap.out$allele1[which(hap.out$pop=="SGA")],
+          hap.out$allele2[which(hap.out$pop=="SGA")]) == 
           pophapcnts$DQBex2Hap[haplo]) 
   
   #CGA12 frequencies (CGA-H)
   pophapcnts$CGA12[haplo] <- 
-    sum(c(hap.out$allele1[hap.out$pop=="CGA-H"],
-          hap.out$allele2[hap.out$pop=="CGA-H"]) == 
+    sum(c(hap.out$allele1[which(hap.out$pop=="CGA-H" | hap.out$survivor == TRUE)],
+          hap.out$allele2[which(hap.out$pop=="CGA-H" | hap.out$survivor == TRUE)]) == 
           pophapcnts$DQBex2Hap[haplo]) 
   
   #CGA23 frequencies (CGA)
   pophapcnts$CGA23[haplo] <- 
-    sum(c(hap.out$allele1[hap.out$pop=="CGA"],
-          hap.out$allele2[hap.out$pop=="CGA"]) == 
+    sum(c(hap.out$allele1[which(hap.out$pop=="CGA" | hap.out$survivor == TRUE)],
+          hap.out$allele2[which(hap.out$pop=="CGA" | hap.out$survivor == TRUE)]) == 
           pophapcnts$DQBex2Hap[haplo]) 
   
 }
@@ -433,19 +433,21 @@ for(i in 1:nrow(hap.out)) {
   rm(hap.cols)
 }
 rowSums(DQBmat) #should all be 2 - 2 alleles per individual
-colSums(DQBmat) #should be equal to
-rowSums(pophapcnts[,-c(1,2)])
-sum(colSums(DQBmat) == rowSums(pophapcnts[,-c(1,2)])) #for all 44 unique haps
-
 #Good!
 
 #Now make an object with the proportion of the population that carries each hap
 DQBprops <- data.frame(hapID = pophapcnts$hapID, NGA=0, CGA=0, CGAH=0, SGA=0)
 for(i in 1:nrow(DQBprops)) {
-  DQBprops$NGA[i] <- sum(DQBmat[hap.out$pop=="NGA",i]>0)/sum(hap.out$pop=="NGA")
-  DQBprops$CGA[i] <- sum(DQBmat[hap.out$pop=="CGA",i]>0)/sum(hap.out$pop=="CGA")
-  DQBprops$CGAH[i] <- sum(DQBmat[hap.out$pop=="CGA-H",i]>0)/sum(hap.out$pop=="CGA-H")
-  DQBprops$SGA[i] <- sum(DQBmat[hap.out$pop=="SGA",i]>0)/sum(hap.out$pop=="SGA")
+  DQBprops$NGA[i] <- sum(DQBmat[which(hap.out$pop=="NGA"),
+                                i]>0)/sum(hap.out$pop=="NGA")
+  DQBprops$CGA[i] <- sum(DQBmat[which(hap.out$pop=="CGA" | 
+                                        hap.out$survivor == TRUE),
+                                i]>0)/sum(hap.out$pop=="CGA")
+  DQBprops$CGAH[i] <- sum(DQBmat[which(hap.out$pop=="CGA-H" | 
+                                         hap.out$survivor == TRUE),
+                                 i]>0)/sum(hap.out$pop=="CGA-H")
+  DQBprops$SGA[i] <- sum(DQBmat[which(hap.out$pop=="SGA"),
+                                i]>0)/sum(hap.out$pop=="SGA")
 }
 DQBprops <- t(DQBprops[,-1])
 
@@ -469,9 +471,9 @@ library(vegan)
 library(scales)
 
 NGAmat <- DQBmat[which(hap.out$pop == "NGA"),]
-CGAmat <- DQBmat[which(hap.out$pop == "CGA"),]
+CGAmat <- DQBmat[which(hap.out$pop == "CGA" | hap.out$survivor == TRUE),]
 SGAmat <- DQBmat[which(hap.out$pop == "SGA"),]
-CGAHmat <- DQBmat[which(hap.out$pop == "CGA-H"),]
+CGAHmat <- DQBmat[which(hap.out$pop == "CGA-H" | hap.out$survivor == TRUE),]
 
 NGAsac <- specaccum(NGAmat, method = "exact")
 SGAsac <- specaccum(SGAmat, method = "exact")
