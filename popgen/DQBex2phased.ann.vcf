@@ -1,5 +1,5 @@
 ##fileformat=VCFv4.2
-##filedate=20260616
+##filedate=20260622
 ##source="beagle.27Feb25.75f.jar"
 ##INFO=<ID=AF,Number=A,Type=Float,Description="Estimated ALT Allele Frequencies">
 ##INFO=<ID=DR2,Number=A,Type=Float,Description="Dosage R-Squared: estimated squared correlation between estimated REF dose [P(RA) + 2*P(RR)] and true REF dose">
