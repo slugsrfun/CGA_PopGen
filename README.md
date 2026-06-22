@@ -16,6 +16,7 @@ Population genetic data analyses for central GA black bear data
     + `colonydat_create2.R` - modified version of function to create `COLONY` input files, from [Ellie Weise's GitHub](https://github.com/weiseell/NbdLamprey/blob/master/Homebrew/colonydat_create.R)
     + `UGA_bbh_Prod1_all_Genotypes.csv` - genetic data for samples submitted for GT-seq genotyping at GTSeek
     + `sampleMetaData_cloneID.csv` - Metadata for all samples, from [Robinson et al. (*in review*)]()
+    + `Finalized Hair Samples w Metadata_Carr.csv` - information on the locations (hair snares), weeks, and years where samples were collected along with sample IDs
 + `/snpfiltering/` - steps involved in filtering capture-seq and GT-seq data for recapture / population genetic analyses
     + `1_filterPopGen` - Apply initial filters for population genetic analyses, remove duplicated genotypes
         + `PopGen.vcf` - filtered VCF for population genetic analysis
